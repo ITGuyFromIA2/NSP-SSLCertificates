@@ -1,0 +1,21 @@
+# Certificates, keys and issuer downloads never belong in this repository. Request folders live
+# outside it (Documents\NSP-SSLCertificates or $env:NSP_SSL_PATH).
+*.pfx
+*.p12
+*.key
+*.pem
+*.crt
+*.cer
+*.csr
+*.p7b
+*.zip
+*PFXPass*
+
+# Local configuration
+*.local.*
+*.sec
+
+# Test and build output
+TestResults*.xml
+/.pester/
+/Artifacts/
