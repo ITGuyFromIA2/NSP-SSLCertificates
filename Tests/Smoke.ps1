@@ -135,6 +135,7 @@ try {
     Assert-Equal @(Get-NSPSslRequest -Path $work -Domain 'vpn.contoso.com')[0].Status 'CertificateReady' 'Status with the ZIP'
     $done = Complete-NSPSslRequest -Domain vpn.contoso.com -Path $work -PfxPassword $password
     Assert-Equal $done.Thumbprint $leaf.Thumbprint 'Leaf found by key'
+    Assert-Equal ($done.Names -join ',') ($request.Names -join ',') 'Names read from the SAN extension'
     Assert-Equal ($done.Chain -join ' > ') 'NSP Test TLS Intermediate DV > NSP Test TLS Root - R1' 'Chain in order, root left out'
     Assert-Equal $done.FriendlyName "vpn.contoso.com_$($leaf.NotBefore.Year)" 'Default friendly name'
     $full = @(& $module { param($p) Read-NSPSslCertificateFile -Path $p } $done.FullChainPath)

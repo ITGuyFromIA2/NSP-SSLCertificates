@@ -124,7 +124,7 @@ function Complete-NSPSslRequest {
             $now = Get-Date
             if ($leaf.NotAfter -lt $now) { Write-Warning "The certificate expired on $($leaf.NotAfter)." }
             if ($leaf.NotBefore -gt $now) { Write-Warning "The certificate isn't valid until $($leaf.NotBefore)." }
-            $issuedNames = @($leaf.DnsNameList | ForEach-Object { $_.Unicode.ToLowerInvariant() })
+            $issuedNames = @(Get-NSPSslDnsName -Certificate $leaf)
             $missing = @($layout.Names | Where-Object { $_ -notin $issuedNames })
             if ($missing) { Write-Warning "Requested but not on the certificate: $($missing -join ', ')." }
 
