@@ -17,6 +17,14 @@ function New-TestSecureString([string]$Text) {
     $secure
 }
 
+# The sibling loader is a generated copy (NSP-Toolkit\tools\Sync-SharedLoader.ps1); checked when
+# NSP-Toolkit is checked out next to this repository.
+$canonical = Join-Path (Split-Path -Parent $root) 'NSP-Toolkit\Private\Import-NSPToolkitModule.ps1'
+if (Test-Path -LiteralPath $canonical) {
+    $normalize = { param($File) [IO.File]::ReadAllText($File) -replace "`r?`n", "`r`n" }
+    Assert-Equal ((& $normalize (Join-Path $root 'Private\Import-NSPToolkitModule.ps1')) -ceq (& $normalize $canonical)) $true 'Shared loader matches NSP-Toolkit (run its tools\Sync-SharedLoader.ps1; do not edit the copy)'
+}
+
 $x509 = 'System.Security.Cryptography.X509Certificates'
 $sha256 = [System.Security.Cryptography.HashAlgorithmName]::SHA256
 $pkcs1 = [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
@@ -176,6 +184,31 @@ try {
     $twice = @(Import-NSPSslPfx -Path $done.PfxPath -Password $password -StoreLocation CurrentUser -WarningAction SilentlyContinue)
     Assert-Equal (($twice | Where-Object Role -NE 'Root' | ForEach-Object Action | Select-Object -Unique) -join ',') 'AlreadyPresent' 'Second import changes nothing'
     Assert-Error { Import-NSPSslPfx -Path $done.PfxPath -Password (New-TestSecureString 'wrong') -StoreLocation CurrentUser } 'Check the password' 'Wrong PFX password'
+
+    # LocalMachine from a non-elevated session relaunches through NSP.Bootstrap. Stubbed inside the
+    # module: no UAC prompt, no Bootstrap needed.
+    $quoted = Join-Path $work "o'brien.pfx"
+    Copy-Item -LiteralPath $done.PfxPath -Destination $quoted
+    & $module {
+        $script:relaunched = $null
+        # Called as: Invoke-NSPElevated -Command <text> -NoExit
+        function script:Import-NSPToolkitModule { }
+        function script:Invoke-NSPElevated { $script:relaunched = $args[1]; $true }
+        function script:Test-NSPIsAdmin { $false }
+    }
+    try {
+        $none = @(Import-NSPSslPfx -Path $quoted -ChainFile $done.IntermediatesPath -Exportable -WarningAction SilentlyContinue)
+        Assert-Equal $none.Count 0 'Relaunch returns nothing here'
+        $command = & $module { $script:relaunched }
+        $parseErrors = $null
+        [void][System.Management.Automation.Language.Parser]::ParseInput($command, [ref]$null, [ref]$parseErrors)
+        Assert-Equal $parseErrors.Count 0 'Relaunch command parses'
+        Assert-Equal ($command.Contains("-Path '$($quoted.Replace("'", "''"))' -NoElevate")) $true 'Relaunch: full quoted path, no second relaunch'
+        Assert-Equal ($command -match "-ChainFile '.+_intermediates\.crt' -Exportable$") $true 'Relaunch keeps -ChainFile and switches'
+        Assert-Error { Import-NSPSslPfx -Path $quoted -Password $password -NoElevate } 'needs an elevated' '-NoElevate fails when not elevated'
+    } finally {
+        & $module { Remove-Item Function:\Import-NSPToolkitModule, Function:\Invoke-NSPElevated, Function:\Test-NSPIsAdmin -ErrorAction SilentlyContinue }
+    }
 } finally {
     foreach ($row in $imported) {
         $store = New-Object "$x509.X509Store" ($row.Store -split '\\')[1], 'CurrentUser'

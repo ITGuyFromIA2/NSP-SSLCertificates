@@ -12,4 +12,6 @@
     Both read WSL-era request folders.
 - `Import-NSPSslPfx`: the client side. Imports a PFX with the certificate in Personal,
   intermediates in Intermediate Certification Authorities, and roots in Trusted Root only on
-  request; reports the resulting chain.
+  request; reports the resulting chain. Into LocalMachine from a non-elevated session it relaunches
+  itself elevated through NSP.Bootstrap's `Invoke-NSPElevated` (loaded on first use, so the module
+  still imports on a bare host); `-NoElevate` fails instead, for RMM jobs.

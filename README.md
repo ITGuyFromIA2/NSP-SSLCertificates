@@ -1,7 +1,8 @@
 # NSP.SSLCertificates
 
 Public SSL certificates from request to install, in native PowerShell. Windows PowerShell **5.1**
-compatible (and 7+). No WSL, openssl, or unzip, and no NSP module dependencies.
+compatible (and 7+). No WSL, openssl, or unzip. NSP.Bootstrap is loaded only for an elevated
+import.
 
 Replaces the WSL/openssl scripts in the NSP-SSLCertificates repository (`Rebase\Wrapper.sh`,
 `1_Gen_NewPrivKey_And_CSR.sh`, `2_CombineCerts.sh`).
@@ -43,7 +44,7 @@ vpn.contoso.com\
 ## Installing the PFX on Windows (the client side)
 
 ```powershell
-Import-NSPSslPfx -Path .\vpn.contoso.com.pfx                     # LocalMachine, elevated
+Import-NSPSslPfx -Path .\vpn.contoso.com.pfx                     # LocalMachine; relaunches elevated if needed
 Import-NSPSslPfx -Path .\vpn.contoso.com.pfx -WhatIf             # show where each certificate would go
 Import-NSPSslPfx -Path .\portal.contoso.com.pfx -ChainFile .\CAR1.cer, .\G2.cer -TrustRoot
 ```
@@ -67,6 +68,11 @@ in `CA`.
 Certificates already in place are left alone. Afterwards the certificate's chain is built (no
 revocation check) and reported (`Chain`, `ChainStatus`). The key is not exportable unless you pass
 `-Exportable`.
+
+From a non-elevated session, a LocalMachine import relaunches itself in a new elevated window
+(NSP.Bootstrap's `Invoke-NSPElevated`; UAC prompt), which asks for the PFX password and shows the
+results. `-NoElevate` fails instead, for scripts and RMM jobs that already run elevated. This is the
+module's only NSP dependency, and it's loaded on first use (installed from the Gallery if missing).
 
 ## What changed from the WSL scripts
 

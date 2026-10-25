@@ -36,15 +36,20 @@ function Import-NSPSslPfx {
     .PARAMETER Path
         The PFX file.
     .PARAMETER Password
-        The PFX password. Prompted for when not given.
+        The PFX password. Prompted for when not given (in the elevated window, when it relaunches).
     .PARAMETER StoreLocation
-        LocalMachine (default; needs an elevated session) or CurrentUser.
+        LocalMachine (default) or CurrentUser. LocalMachine needs an elevated session: from a
+        non-elevated one the command relaunches itself in a new elevated window (NSP.Bootstrap's
+        Invoke-NSPElevated, UAC prompt) and the import runs and reports there.
     .PARAMETER ChainFile
         Extra intermediate or root certificate files to place.
     .PARAMETER Exportable
         Let the private key be exported again later. Off by default.
     .PARAMETER TrustRoot
         Add self-signed roots from the PFX or -ChainFile to Trusted Root when they aren't there.
+    .PARAMETER NoElevate
+        Don't relaunch elevated; fail instead when the session isn't (for scripts and RMM jobs that
+        already run as SYSTEM or an administrator).
     .EXAMPLE
         Import-NSPSslPfx -Path C:\Temp\vpn.contoso.com.pfx
     .EXAMPLE
@@ -54,17 +59,37 @@ function Import-NSPSslPfx {
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory, Position = 0)][string]$Path,
-        [Parameter(Mandatory)][securestring]$Password,
+        [securestring]$Password,
         [ValidateSet('LocalMachine', 'CurrentUser')][string]$StoreLocation = 'LocalMachine',
         [string[]]$ChainFile = @(),
         [switch]$Exportable,
-        [switch]$TrustRoot
+        [switch]$TrustRoot,
+        [switch]$NoElevate
     )
 
+    # Full paths: the elevated window starts in System32.
     $Path = (Resolve-Path -LiteralPath $Path).ProviderPath
-    if ($StoreLocation -eq 'LocalMachine' -and -not $WhatIfPreference -and -not (Test-NSPSslAdministrator)) {
-        throw 'Importing into the LocalMachine stores needs an elevated PowerShell session. Run as administrator, or use -StoreLocation CurrentUser.'
+    $ChainFile = @($ChainFile | ForEach-Object { (Resolve-Path -LiteralPath $_).ProviderPath })
+
+    if ($StoreLocation -eq 'LocalMachine' -and -not $WhatIfPreference) {
+        Use-NSPSslDependency
+        if (-not $NoElevate) {
+            $quote = { param([string]$Text) "'" + $Text.Replace("'", "''") + "'" }
+            $relaunch = "Import-Module $(& $quote (Join-Path $script:ModuleRoot 'NSP.SSLCertificates.psd1')); Import-NSPSslPfx -Path $(& $quote $Path) -NoElevate"
+            if ($ChainFile) { $relaunch += ' -ChainFile ' + (($ChainFile | ForEach-Object { & $quote $_ }) -join ', ') }
+            if ($Exportable) { $relaunch += ' -Exportable' }
+            if ($TrustRoot) { $relaunch += ' -TrustRoot' }
+            if (Invoke-NSPElevated -Command $relaunch -NoExit) {
+                # A SecureString can't cross into the new process; the elevated window asks for it.
+                Write-Warning 'Not elevated: the import continues in a new elevated PowerShell window (UAC prompt), which asks for the PFX password.'
+                return
+            }
+        }
+        if (-not (Test-NSPIsAdmin)) {
+            throw 'Importing into the LocalMachine stores needs an elevated PowerShell session. Run as administrator, or use -StoreLocation CurrentUser.'
+        }
     }
+    if (-not $Password) { $Password = Read-Host 'PFX password' -AsSecureString }
 
     $x509 = 'System.Security.Cryptography.X509Certificates'
     $flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]
