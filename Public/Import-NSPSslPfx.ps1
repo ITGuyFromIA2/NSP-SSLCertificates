@@ -153,6 +153,11 @@ function Import-NSPSslPfx {
             # The CurrentUser root view already includes the machine's roots.
             $existing = @(& $inStore 'Root' 'LocalMachine' $certificate.Thumbprint)
         }
+        if ($role -eq 'Root' -and -not $existing) {
+            # Windows' automatic root update puts the public roots it fetches in Third-Party Root.
+            $existing = @(& $inStore 'AuthRoot' 'LocalMachine' $certificate.Thumbprint)
+            if ($existing) { $row.Note = 'Trusted through Third-Party Root Certification Authorities (AuthRoot).' }
+        }
         if ($existing -and ($role -ne 'Certificate' -or $existing[0].HasPrivateKey)) {
             $row.Action = 'AlreadyPresent'
             if ($role -eq 'Certificate') { $leafRow = $row }

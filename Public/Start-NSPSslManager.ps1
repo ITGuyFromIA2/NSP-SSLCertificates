@@ -69,7 +69,10 @@ function Start-NSPSslManager {
                     continue
                 }
                 $result = Complete-NSPSslRequest -Folder $request.Folder -PfxPassword $password
-                $result | Format-List Subject, Names, NotAfter, Chain, PfxPath, FullChainPath | Out-Host
+                $result | Format-List Subject, Names, NotAfter, Chain, PfxRoot, PfxPath, FullChainPath | Out-Host
+                if ($result.InstallerPath) {
+                    Write-Host "Windows server: copy $(Split-Path -Parent $result.InstallerPath) to it and double-click $(Split-Path -Leaf $result.InstallerPath)." -ForegroundColor Cyan
+                }
                 Write-Host 'Send the PFX password separately from the PFX.' -ForegroundColor Yellow
                 if ((& $ask 'Open the deliverables folder? (y/n)' 'y') -match '^[yY]') { Invoke-Item -LiteralPath $layout.Deliverables }
             } elseif ($choice -match '^[nN]') {

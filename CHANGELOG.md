@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0 (unreleased)
+
+- `Install-NSPSslCertificate`: the server side, start to finish, and interactive (NSP.Console):
+  - imports the PFX, and offers the root when the chain doesn't validate;
+  - when IIS is installed, proposes and applies the bindings the certificate belongs on (NSP.IIS);
+  - offers to delete each certificate it replaced, once nothing in IIS or http.sys uses it.
+- `Complete-NSPSslRequest` writes `<domain>_Install\`: a copy of the PFX and a double-click
+  `Install-<domain>.cmd` (NSP.ClientScripts 0.1.6 ToolShim, starts in its folder, pauses at the
+  end). `-NoInstaller` skips it.
+- The PFX always carries the root: the issuer's copy, or this machine's from Root/AuthRoot when the
+  issuer left it out (GoDaddy's G2). The PEM files are unchanged (`-IncludeRoot` still adds it to
+  them). New output properties: `PfxRoot`, `InstallerPath`.
+- `Import-NSPSslPfx`: a root trusted through Third-Party Root (AuthRoot, where Windows' automatic
+  root update puts it) counts as already present instead of being reported untrusted.
+
 ## 0.1.0 (2026-10-25)
 
 - First release. Replaces the WSL/openssl scripts in the NSP-SSLCertificates repository (`Rebase`):

@@ -10,20 +10,29 @@ function Complete-NSPSslRequest {
         public key matches the request's private key, so extra files in the ZIP don't matter, and a
         ZIP for the wrong request is refused.
 
-        The intermediates are put in order from the certificate up. Self-signed roots are left out
-        (clients already trust them; -IncludeRoot keeps one). A cross-signed intermediate that
+        The intermediates are put in order from the certificate up. A cross-signed intermediate that
         carries a root's name, such as Starfield TLS Root CA - R1 issued by Starfield Root
         Certificate Authority - G2, is an intermediate and stays in.
+
+        The PFX also carries the root, so an offline machine can be given it: the issuer's copy if
+        it sent one, else this machine's trusted copy (issuers usually leave it out - GoDaddy's IIS
+        bundle stops at Root CA - R1). Import-NSPSslPfx and Install-NSPSslCertificate only add a
+        root to Trusted Root when asked. The PEM files leave it out, because a server sending its
+        root is wasted bytes and flagged by scanners; -IncludeRoot puts it in them too.
 
         Writes to the request's Deliverables folder:
 
             <domain>.crt                the certificate (PEM)
             <domain>_intermediates.crt  the intermediates, in order (PEM)
             <domain>_FullChain.pem      certificate + intermediates (for FortiGate, nginx, Apache)
-            <domain>.pfx                certificate + intermediates + private key (for Windows/IIS)
+            <domain>.pfx                certificate + intermediates + root + private key (Windows/IIS)
+            <domain>_Install\           a copy of the PFX, Install-<domain>.ps1 and .cmd
 
-        The PFX password is not saved anywhere; send it separately from the PFX. Import the PFX on
-        Windows with Import-NSPSslPfx, which puts each certificate in the right store.
+        Copy the _Install folder to the server and double-click the .cmd: it elevates, installs the
+        NSP modules from the PowerShell Gallery, and runs Install-NSPSslCertificate (import, IIS
+        bindings, old certificate). -NoInstaller skips it.
+
+        The PFX password is not saved anywhere; send it separately from the PFX.
 
         Replaces 2_CombineCerts.sh from NSP-SSLCertificates. Requests started there (Rebase\<domain>
         with Deliverables_<domain>) work too: pass -Path <the Rebase folder>.
@@ -40,7 +49,10 @@ function Complete-NSPSslRequest {
     .PARAMETER FriendlyName
         The PFX certificate's friendly name. Default: <domain>_<year issued>.
     .PARAMETER IncludeRoot
-        Keep a self-signed root, when the issuer sent one, in the intermediates, full chain, and PFX.
+        Also put the root, when the issuer sent one, in the intermediates and full-chain PEM files.
+        (The PFX always carries it.)
+    .PARAMETER NoInstaller
+        Don't write the <domain>_Install folder.
     .EXAMPLE
         Complete-NSPSslRequest -Domain vpn.contoso.com
     .EXAMPLE
@@ -57,7 +69,8 @@ function Complete-NSPSslRequest {
         [string[]]$InputPath,
         [Parameter(Mandatory)][securestring]$PfxPassword,
         [string]$FriendlyName,
-        [switch]$IncludeRoot
+        [switch]$IncludeRoot,
+        [switch]$NoInstaller
     )
 
     process {
@@ -118,8 +131,11 @@ function Complete-NSPSslRequest {
             if (-not $chain -or -not (Test-NSPSslSelfSigned -Certificate $chain[-1])) {
                 $top = if ($chain) { $chain[-1] } else { $leaf }
                 if (-not $chain) { Write-Warning "The issuer sent no intermediates for $($leaf.Subject); clients may not be able to build its chain." }
-                Write-Verbose "Chain ends at $($top.Subject), issued by $($top.Issuer) (not included)."
+                Write-Verbose "Chain ends at $($top.Subject), issued by $($top.Issuer), which the issuer didn't send."
             }
+            # The PFX carries the root: the issuer's, else this machine's trusted copy.
+            $pfxRoot = if ($chain -and (Test-NSPSslSelfSigned -Certificate $chain[-1])) { $chain[-1] } else { Find-NSPSslTrustedRoot -Certificate $(if ($chain) { $chain[-1] } else { $leaf }) }
+            if (-not $pfxRoot) { Write-Warning "The root for $($leaf.Subject) isn't trusted on this machine, so the PFX goes without it. Machines that can reach Windows Update fetch it themselves." }
 
             $now = Get-Date
             if ($leaf.NotAfter -lt $now) { Write-Warning "The certificate expired on $($leaf.NotAfter)." }
@@ -142,9 +158,19 @@ function Complete-NSPSslRequest {
             $withKey.FriendlyName = $FriendlyName
             $bundle = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
             [void]$bundle.Add($withKey)
-            foreach ($issuer in $issuers) { [void]$bundle.Add($issuer) }
+            foreach ($issuer in @($chain | Where-Object { -not (Test-NSPSslSelfSigned -Certificate $_) })) { [void]$bundle.Add($issuer) }
+            if ($pfxRoot) { [void]$bundle.Add($pfxRoot) }
             $pfx = $bundle.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, (ConvertFrom-NSPSslSecureString -SecureString $PfxPassword))
             [IO.File]::WriteAllBytes($layout.PfxPath, $pfx)
+
+            $installerPath = $null
+            if (-not $NoInstaller) {
+                try {
+                    $installerPath = Write-NSPSslInstaller -Layout $layout
+                } catch {
+                    Write-Warning "The deliverables are written, but the install folder isn't: $($_.Exception.Message)"
+                }
+            }
 
             [pscustomobject]@{
                 Domain            = $layout.Domain
@@ -153,11 +179,13 @@ function Complete-NSPSslRequest {
                 Thumbprint        = $leaf.Thumbprint
                 NotAfter          = $leaf.NotAfter
                 Chain             = @($issuers | ForEach-Object { $_.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) })
+                PfxRoot           = $(if ($pfxRoot) { $pfxRoot.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) } else { $null })
                 FriendlyName      = $FriendlyName
                 CertificatePath   = $layout.CertificatePath
                 IntermediatesPath = $layout.IntermediatesPath
                 FullChainPath     = $layout.FullChainPath
                 PfxPath           = $layout.PfxPath
+                InstallerPath     = $installerPath
             }
         } finally {
             if ($rsa) { $rsa.Dispose() }

@@ -38,10 +38,34 @@ vpn.contoso.com\
         vpn.contoso.com.crt          certificate (PEM)
         vpn.contoso.com_intermediates.crt
         vpn.contoso.com_FullChain.pem    certificate + intermediates (FortiGate, nginx, Apache)
-        vpn.contoso.com.pfx          certificate + intermediates + key (Windows, IIS)
+        vpn.contoso.com.pfx          certificate + intermediates + root + key (Windows, IIS)
+        vpn.contoso.com_Install\     copy of the PFX + Install-vpn.contoso.com.cmd/.ps1 (for the server)
 ```
 
-## Installing the PFX on Windows (the client side)
+## Installing on a Windows server (the client side)
+
+Copy the request's `<domain>_Install` folder to the server and double-click
+`Install-<domain>.cmd`. It's an NSP.ClientScripts ToolShim, and it runs these steps:
+
+1. Elevates (UAC).
+2. Installs NSP.SSLCertificates, NSP.Console and NSP.IIS from the PowerShell Gallery.
+3. Runs `Install-NSPSslCertificate` in that folder:
+   - **Import:** asks for the PFX password, then places each certificate in the right store
+     (table below). If the chain doesn't validate because the root isn't trusted (no Windows
+     Update), it offers to add the root the PFX carries.
+   - **IIS** (when installed): lists the https bindings with their current certificates and marks
+     with `*` the ones the new certificate belongs on. A binding is marked when its host name is on
+     the certificate, or, with no host name, when its current certificate covers the same names.
+     Enter takes the marked ones; `1,3`, `2-4`, `A` or `N` choose otherwise. Matching and
+     rebinding are in [NSP.IIS](https://github.com/ITGuyFromIA2/NSP-IIS).
+   - **Old certificate:** for each certificate a binding was moved off, if no IIS or other http.sys
+     binding still uses it, offers to delete it and its key (default no). Services that load a
+     certificate themselves (RDP, SQL Server, LDAPS, Exchange) aren't checked.
+4. Waits for Enter, so the results stay on screen.
+
+`Install-NSPSslCertificate -Path <pfx>` does the same from a prompt. `-SkipIis` imports only.
+
+### Import only
 
 ```powershell
 Import-NSPSslPfx -Path .\vpn.contoso.com.pfx                     # LocalMachine; relaunches elevated if needed
@@ -79,7 +103,7 @@ module's only NSP dependency, and it's loaded on first use (installed from the G
 - One PowerShell module instead of per-domain copies of the bash scripts and `variables.sh`.
 - The issuer's certificate is found by matching the private key, not by file name. A ZIP for the
   wrong request is refused, and extra files in the ZIP don't matter. The intermediates are put in
-  order, and self-signed roots are left out (`-IncludeRoot` keeps them).
+  order, and self-signed roots are left out of the PEM files (see the PFX below).
 - **No default PFX password, and the password is never written to disk** (`_PFXPass.txt` is gone).
   Send it separately from the PFX.
 - An existing key is never overwritten: re-running a request refuses, and `-Force` archives the
@@ -91,6 +115,10 @@ module's only NSP dependency, and it's loaded on first use (installed from the G
 - `_pub.key` is no longer written. It's derivable from the key or certificate, and nothing used it.
 - Requests started with the WSL scripts can be finished here: `-Path <the Rebase folder>` reads
   `Deliverables_<domain>\` and the PKCS#1 or PKCS#8 keys openssl wrote.
+- The PFX carries the root: the issuer's copy, or this machine's trusted copy when the issuer
+  left it out (GoDaddy's IIS bundle stops at the cross-signed Root CA - R1, so G2 comes from
+  here). The PEM files leave it out unless `-IncludeRoot`, because a server shouldn't send its
+  root.
 - The PFX uses TripleDES/SHA1 (what `openssl pkcs12 -export -legacy` produced), so FortiGate and
   older Windows can import it.
 

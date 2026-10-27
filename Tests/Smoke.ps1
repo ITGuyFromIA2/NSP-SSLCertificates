@@ -143,7 +143,19 @@ try {
     Assert-Equal @(& $module { param($p) Read-NSPSslCertificateFile -Path $p } $done.IntermediatesPath).Count 2 'Intermediates file'
     $pfx = New-Object "$x509.X509Certificate2Collection"
     $pfx.Import($done.PfxPath, 'Smoke-Test-1!', [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
-    Assert-Equal $pfx.Count 3 'PFX holds leaf + 2 intermediates'
+    Assert-Equal $pfx.Count 4 'PFX holds leaf + 2 intermediates + the root the issuer sent'
+    Assert-Equal $done.PfxRoot 'NSP Test Root - G2' 'PfxRoot reported'
+
+    # The _Install folder: a copy of the PFX, the shim, and the .cmd that runs it.
+    Assert-Equal (Split-Path -Leaf $done.InstallerPath) 'Install-vpn.contoso.com.cmd' 'Installer is the .cmd'
+    $installFolder = Split-Path -Parent $done.InstallerPath
+    Assert-Equal ((Get-ChildItem -LiteralPath $installFolder | ForEach-Object Name | Sort-Object) -join ',') 'Install-vpn.contoso.com.cmd,Install-vpn.contoso.com.ps1,vpn.contoso.com.pfx' 'Install folder contents'
+    $shimText = [IO.File]::ReadAllText((Join-Path $installFolder 'Install-vpn.contoso.com.ps1'))
+    Assert-Equal ($shimText -match "\`$EntryFunction\s+= 'Install-NSPSslCertificate'") $true 'Shim runs Install-NSPSslCertificate'
+    Assert-Equal ($shimText -match '\$StartInShimFolder\s+= \$true' -and $shimText -match '\$PauseOnExit\s+= \$true') $true 'Shim starts beside the PFX and pauses'
+    Assert-Equal ($shimText -match '"Name":\s*"NSP.IIS"') $true 'Shim installs NSP.IIS'
+    $noInstaller = Complete-NSPSslRequest -Folder $request.Folder -PfxPassword $password -NoInstaller
+    Assert-Equal $noInstaller.InstallerPath $null '-NoInstaller'
     Assert-Equal (@($pfx | Where-Object HasPrivateKey)[0].Thumbprint) $leaf.Thumbprint 'PFX key is on the leaf'
     Assert-Equal (@($pfx | Where-Object HasPrivateKey)[0].FriendlyName) $done.FriendlyName 'PFX friendly name'
     $withRoot = Complete-NSPSslRequest -Folder $request.Folder -PfxPassword $password -IncludeRoot -FriendlyName 'custom'
@@ -165,8 +177,23 @@ try {
         [IO.File]::WriteAllText($Path, $pem)
     } $legacyKey
     New-TestZip -Path (Join-Path $legacy 'Inputs\legacy.contoso.com.zip') -Leaf (New-TestLeaf -KeyPath $legacyKey -Names 'legacy.contoso.com') -Bundle $dv, $r1
-    $legacyDone = Complete-NSPSslRequest -Domain legacy.contoso.com -Path $work -PfxPassword $password
+    $legacyDone = Complete-NSPSslRequest -Domain legacy.contoso.com -Path $work -PfxPassword $password -NoInstaller -WarningVariable legacyWarning -WarningAction SilentlyContinue
     Assert-Equal (Split-Path -Parent $legacyDone.PfxPath) (Join-Path $legacy 'Deliverables_legacy.contoso.com') 'Legacy deliverables folder reused'
+    # No G2 in that ZIP, and the test root isn't trusted here: the PFX goes without, with a warning.
+    Assert-Equal $legacyDone.PfxRoot $null 'No root to add'
+    Assert-Equal ([string]$legacyWarning -match "isn't trusted on this machine") $true 'Missing root warned about'
+    Assert-Equal (& $module { param($c) Find-NSPSslTrustedRoot -Certificate $c } $r1) $null 'Untrusted test root not found in the machine stores'
+
+    # Binding choices: blank = proposed, A = all selectable, N = none, lists and ranges.
+    $pick = { param($Answer) @(& $module { param($a) Resolve-NSPSslBindingSelection -Answer $a -Count 5 -Proposed 2, 4 -Selectable 1, 2, 4, 5 } $Answer) -join ',' }
+    Assert-Equal (& $pick '') '2,4' 'Enter takes the proposal'
+    Assert-Equal (& $pick 'a') '1,2,4,5' 'A = all selectable'
+    Assert-Equal (& $pick 'N') '' 'N = none'
+    Assert-Equal (& $pick '5, 1 1') '5,1' 'List, de-duplicated'
+    Assert-Equal (& $pick '4-5') '4,5' 'Range'
+    Assert-Error { & $pick '3' } "can't be rebound" 'Unselectable binding refused'
+    Assert-Error { & $pick '9' } "no binding 9" 'Out of range refused'
+    Assert-Error { & $pick 'x' } "isn't a binding number" 'Junk refused'
 
     # Client side: WhatIf changes nothing; a CurrentUser import sorts the stores.
     $preview = @(Import-NSPSslPfx -Path $withRoot.PfxPath -Password $password -StoreLocation CurrentUser -WhatIf)
@@ -207,6 +234,15 @@ try {
         Assert-Equal ($command.Contains("-Path '$($quoted.Replace("'", "''"))' -NoElevate")) $true 'Relaunch: full quoted path, no second relaunch'
         Assert-Equal ($command -match "-ChainFile '.+_intermediates\.crt' -Exportable$") $true 'Relaunch keeps -ChainFile and switches'
         Assert-Error { Import-NSPSslPfx -Path $quoted -Password $password -NoElevate } 'needs an elevated' '-NoElevate fails when not elevated'
+
+        # Install-NSPSslCertificate relaunches the same way.
+        $none = @(Install-NSPSslCertificate -Path $quoted -SkipIis -WarningAction SilentlyContinue)
+        Assert-Equal $none.Count 0 'Install relaunch returns nothing here'
+        $command = & $module { $script:relaunched }
+        [void][System.Management.Automation.Language.Parser]::ParseInput($command, [ref]$null, [ref]$parseErrors)
+        Assert-Equal $parseErrors.Count 0 'Install relaunch command parses'
+        Assert-Equal ($command -match "Install-NSPSslCertificate -Path '.+o''brien\.pfx' -NoElevate -SkipIis$") $true 'Install relaunch: quoted path, switches kept'
+        Assert-Error { Install-NSPSslCertificate -Path $quoted -NoElevate } 'needs an elevated' 'Install -NoElevate fails when not elevated'
     } finally {
         & $module { Remove-Item Function:\Import-NSPToolkitModule, Function:\Invoke-NSPElevated, Function:\Test-NSPIsAdmin -ErrorAction SilentlyContinue }
     }

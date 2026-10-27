@@ -31,5 +31,7 @@ function Get-NSPSslRequestLayout {
         IntermediatesPath = Join-Path $deliverables "$($name)_intermediates.crt"
         FullChainPath     = Join-Path $deliverables "$($name)_FullChain.pem"
         PfxPath           = Join-Path $deliverables "$name.pfx"
+        InstallFolder     = Join-Path $deliverables "$($name)_Install"
+        InstallerPath     = Join-Path $deliverables "$($name)_Install\Install-$name.ps1"
     }
 }
