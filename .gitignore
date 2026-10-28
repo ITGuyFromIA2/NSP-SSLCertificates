@@ -19,3 +19,6 @@
 TestResults*.xml
 /.pester/
 /Artifacts/
+
+# Sample scripts from the field (name clients); kept locally for reference, never committed.
+/FromUser/
