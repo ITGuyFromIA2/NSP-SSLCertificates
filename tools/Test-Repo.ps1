@@ -14,8 +14,8 @@ if (($publicNames -join ',') -ne ($exported -join ',')) { throw "FunctionsToExpo
 # Public-source gate: every tracked text file, since the repository itself is public. Shows
 # locations only, never matched values.
 $publicFiles = @(
-    Get-ChildItem -Path $repoRoot -Recurse -File | Where-Object {
-        $_.FullName -notmatch '\\\.git\\' -and $_.Extension -in '.ps1', '.psm1', '.psd1', '.md', '.txt', '.json', '.xml' -and $_.Name -notlike '*.local.*' -and $_.FullName -ne $PSCommandPath  # this file holds the patterns themselves
+    Get-Item -LiteralPath @(git -C $repoRoot ls-files | ForEach-Object { Join-Path $repoRoot $_ }) | Where-Object {
+        $_.Extension -in '.ps1', '.psm1', '.psd1', '.md', '.txt', '.json', '.xml' -and $_.Name -notlike '*.local.*' -and $_.FullName -ne $PSCommandPath  # this file holds the patterns themselves
     }
     Get-Item (Join-Path $repoRoot 'LICENSE')
 )
@@ -58,7 +58,8 @@ foreach ($exe in 'powershell.exe', 'pwsh.exe') {
 $analyzer = Get-Module -ListAvailable PSScriptAnalyzer | Select-Object -First 1
 if ($analyzer) {
     Import-Module $analyzer.Path -Force
-    $findings = @(Invoke-ScriptAnalyzer -Path $repoRoot -Recurse -Settings (Join-Path $repoRoot 'PSScriptAnalyzerSettings.psd1'))
+    $settings = Join-Path $repoRoot 'PSScriptAnalyzerSettings.psd1'
+    $findings = @($publicFiles | Where-Object Extension -In '.ps1', '.psm1', '.psd1' | ForEach-Object { Invoke-ScriptAnalyzer -Path $_.FullName -Settings $settings })
     if ($findings.Count) {
         $findings | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize
         throw 'PSScriptAnalyzer reported findings.'
