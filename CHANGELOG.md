@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-10-28)
 
 - `Install-NSPSslCertificate`: the server side, start to finish, and interactive (NSP.Console):
   - imports the PFX, and offers the root when the chain doesn't validate;
